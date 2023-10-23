@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::io::{BufRead, Read, Write};
+use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::{env, fs, thread};
 use std::path::PathBuf;
@@ -10,8 +10,6 @@ use itertools::Itertools;
 enum HttpMethod {
     GET,
     POST,
-    PUT,
-    DELETE,
 }
 
 impl From<&str> for HttpMethod {
@@ -27,7 +25,7 @@ impl From<&str> for HttpMethod {
 struct HttpRequest<'a> {
     method: HttpMethod,
     path: &'a str,
-    version: &'a str,
+    _version: &'a str,
     headers: HashMap<&'a str, &'a str>,
     body: Option<&'a [u8]>,
 }
@@ -36,7 +34,7 @@ impl HttpRequest<'_> {
     fn from_request_str(buffer: &str) -> Result<HttpRequest> {
         let mut lines = buffer.split("\r\n");
 
-        let (method, path, version) = lines
+        let (method, path, _version) = lines
             .next().ok_or(anyhow!("Invalid frame"))?
             .split(' ')
             .collect_tuple().ok_or(anyhow!("Invalid frame"))?;
@@ -65,7 +63,7 @@ impl HttpRequest<'_> {
 
         Ok(HttpRequest {
             method: HttpMethod::from(method),
-            version,
+            _version,
             path,
             headers,
             body,
@@ -155,7 +153,6 @@ fn handle_connection(mut stream: TcpStream, config: Arc<Config>) -> Result<()> {
                 _ => send_not_found(&stream),
             }?;
         }
-        _ => unimplemented!()
     }
 
 
