@@ -136,6 +136,7 @@ fn handle_connection(mut stream: TcpStream, config: Arc<Config>) -> Result<()> {
     let mut buffer: [u8; 512] = [0; 512];
     stream.read(&mut buffer)?;
     let request = std::str::from_utf8(&buffer)?;
+    println!("{request}");
     let frame = HttpRequest::from_request_str(&request)?;
     match frame.method {
         HttpMethod::GET => {
