@@ -27,7 +27,7 @@ struct HttpRequest<'a> {
     method: HttpMethod,
     path: &'a str,
     version: &'a str,
-    headers: HashMap<String, String>,
+    headers: HashMap<&'a str, &'a str>,
 }
 
 impl HttpRequest<'_> {
@@ -40,17 +40,16 @@ impl HttpRequest<'_> {
             .collect_tuple().ok_or(anyhow!("Invalid frame"))?;
 
         let headers: HashMap<_, _> = lines
-            .filter_map(|l| {
+            .map_while(|l| {
                 if let Some((key, value)) = l.split_once(": ") {
                     Some((
-                        key.to_string(),
-                        value.to_string(),
+                        key,
+                        value,
                     ))
                 } else {
                     None
                 }
-            })
-            .collect();
+            }).collect();
 
         Ok(HttpRequest {
             method: HttpMethod::from(method),
@@ -92,7 +91,7 @@ fn echo_route(stream: &TcpStream, frame: &HttpRequest) -> Result<usize> {
 fn user_agent_route(stream: &TcpStream, frame: &HttpRequest) -> Result<usize> {
     let user_agent = frame.headers.get("User-Agent")
         .ok_or(anyhow!("User Agent not found"))?;
-    send_text_plain(&stream, user_agent.as_str())
+    send_text_plain(&stream, user_agent)
 }
 
 fn files_route(stream: &TcpStream, frame: &HttpRequest, dir: &Option<String>) -> Result<usize> {
@@ -124,6 +123,7 @@ fn handle_connection(mut stream: TcpStream, config: Arc<Config>) -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug)]
 struct Config {
     dir: Option<String>,
 }
@@ -140,6 +140,8 @@ fn main() -> Result<()> {
     let config = Arc::new(Config {
         dir
     });
+
+    println!("{config:?}");
 
     for stream in listener.incoming() {
         match stream {
