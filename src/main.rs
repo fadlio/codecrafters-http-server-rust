@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::io::{BufRead, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::thread;
 use anyhow::{anyhow, Context, Result};
 use itertools::Itertools;
 
@@ -102,12 +103,15 @@ fn route_connection(mut stream: TcpStream) -> Result<()> {
 
 fn main() -> Result<()> {
     let listener = TcpListener::bind("127.0.0.1:4221")?;
+    // let pool = ThreadPool::new(4);
 
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
                 println!("accepted new connection");
-                route_connection(stream)?;
+                thread::spawn(|| {
+                    route_connection(stream).unwrap();
+                });
             }
             Err(e) => {
                 println!("error: {}", e);
