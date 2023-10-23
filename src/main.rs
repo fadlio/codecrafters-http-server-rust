@@ -100,8 +100,11 @@ fn files_route(stream: &TcpStream, frame: &HttpRequest, dir: &Option<String>) ->
     let mut path = PathBuf::from(dir);
     let filename = &frame.path[7..];
     path.push(filename);
-    let data = fs::read(path).context("File read")?;
-    send_binary(stream, &data)
+    if let Ok(data) = fs::read(path).context("File read") {
+        send_binary(stream, &data)
+    } else {
+        not_found_route(stream)
+    }
 }
 
 
