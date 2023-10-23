@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::io::{BufRead, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::thread;
+use std::{env, fs, thread};
+use std::path::PathBuf;
+use std::sync::Arc;
 use anyhow::{anyhow, Context, Result};
 use itertools::Itertools;
 
@@ -59,6 +61,14 @@ impl HttpRequest<'_> {
     }
 }
 
+fn send_binary(mut stream: &TcpStream, data: &Vec<u8>) -> Result<usize> {
+    let mut response = "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n".to_string();
+    response.push_str(&*format!("Content-Length: {}\r\n\r\n", response.len()));
+    let mut response_bytes = Vec::from(response.as_bytes());
+    response_bytes.extend(data);
+    stream.write(&response_bytes).context("Send binary stream write")
+}
+
 fn send_text_plain(mut stream: &TcpStream, text: &str) -> Result<usize> {
     let mut data = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n".to_string();
     data.push_str(&*format!("Content-Length: {}\r\n\r\n", text.len()));
@@ -85,8 +95,17 @@ fn user_agent_route(stream: &TcpStream, frame: &HttpRequest) -> Result<usize> {
     send_text_plain(&stream, user_agent.as_str())
 }
 
+fn files_route(stream: &TcpStream, frame: &HttpRequest, dir: &Option<String>) -> Result<usize> {
+    let dir = dir.as_ref().ok_or(anyhow!("Directory not specified"))?;
+    let mut path = PathBuf::from(dir);
+    let filename = &frame.path[7..];
+    path.push(filename);
+    let data = fs::read(path).context("File read")?;
+    send_binary(stream, &data)
+}
 
-fn route_connection(mut stream: TcpStream) -> Result<()> {
+
+fn handle_connection(mut stream: TcpStream, config: Arc<Config>) -> Result<()> {
     let mut buffer: [u8; 512] = [0; 512];
     stream.read(&mut buffer)?;
     let request = std::str::from_utf8(&buffer)?;
@@ -95,22 +114,37 @@ fn route_connection(mut stream: TcpStream) -> Result<()> {
         "/" => index_route(&stream),
         _ if frame.path.starts_with("/echo/") => echo_route(&stream, &frame),
         _ if frame.path.starts_with("/user-agent") => user_agent_route(&stream, &frame),
+        _ if frame.path.starts_with("/files/") => files_route(&stream, &frame, &config.dir),
         _ => not_found_route(&stream),
     }?;
 
     Ok(())
 }
 
+struct Config {
+    dir: Option<String>,
+}
+
 fn main() -> Result<()> {
     let listener = TcpListener::bind("127.0.0.1:4221")?;
-    // let pool = ThreadPool::new(4);
+    let args: Vec<String> = env::args().collect();
+    let dir = if args.len() > 2 && args[1].as_str() == "--directory" {
+        Some(args[2].clone())
+    } else {
+        None
+    };
+
+    let config = Arc::new(Config {
+        dir
+    });
 
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
                 println!("accepted new connection");
-                thread::spawn(|| {
-                    route_connection(stream).unwrap();
+                let cloned_config = config.clone();
+                thread::spawn(move || {
+                    handle_connection(stream, cloned_config).unwrap();
                 });
             }
             Err(e) => {
