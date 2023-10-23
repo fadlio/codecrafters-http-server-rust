@@ -63,7 +63,7 @@ impl HttpRequest<'_> {
 
 fn send_binary(mut stream: &TcpStream, data: &Vec<u8>) -> Result<usize> {
     let mut response = "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n".to_string();
-    response.push_str(&*format!("Content-Length: {}\r\n\r\n", response.len()));
+    response.push_str(&*format!("Content-Length: {}\r\n\r\n", data.len()));
     let mut response_bytes = Vec::from(response.as_bytes());
     response_bytes.extend(data);
     stream.write(&response_bytes).context("Send binary stream write")
