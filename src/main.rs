@@ -39,14 +39,23 @@ impl HttpFrame<'_> {
     }
 }
 
+fn send_text_plain(mut stream: &TcpStream, text: &str) -> Result<usize> {
+    let mut data = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n".to_string();
+    data.push_str(&*format!("Content-Length: {}\r\n\r\n", text.len()));
+    data.push_str(text);
+    let bytes_written = stream.write(data.as_bytes())?;
+    Ok(bytes_written)
+}
+
 
 fn handle_connection(mut stream: TcpStream) -> Result<()> {
-    let mut buffer: [u8; 128] = [0; 128];
+    let mut buffer: [u8; 512] = [0; 512];
     stream.read(&mut buffer)?;
     let request = std::str::from_utf8(&buffer)?;
     let frame = HttpFrame::from_request_str(&request)?;
     match frame.path {
         "/" => stream.write(b"HTTP/1.1 200 OK\r\n\r\n")?,
+        _ if frame.path.starts_with("/echo/") => send_text_plain(&stream, &frame.path[6..])?,
         _ => stream.write(b"HTTP/1.1 404 Not Found\r\n\r\n")?,
     };
 
