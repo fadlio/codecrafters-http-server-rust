@@ -18,6 +18,7 @@ impl From<&str> for HttpMethod {
     fn from(value: &str) -> Self {
         match value {
             "GET" => HttpMethod::GET,
+            "POST" => HttpMethod::POST,
             _ => unimplemented!()
         }
     }
@@ -28,6 +29,7 @@ struct HttpRequest<'a> {
     path: &'a str,
     version: &'a str,
     headers: HashMap<&'a str, &'a str>,
+    body: Option<&'a [u8]>,
 }
 
 impl HttpRequest<'_> {
@@ -40,6 +42,7 @@ impl HttpRequest<'_> {
             .collect_tuple().ok_or(anyhow!("Invalid frame"))?;
 
         let headers: HashMap<_, _> = lines
+            .by_ref()
             .map_while(|l| {
                 if let Some((key, value)) = l.split_once(": ") {
                     Some((
@@ -51,11 +54,21 @@ impl HttpRequest<'_> {
                 }
             }).collect();
 
+        let body = if let Some(body_data) = lines.next() {
+            let data_len: usize = headers.get("Content-Length")
+                .ok_or(anyhow!("No content-length specified"))?
+                .parse()?;
+            Some(&body_data.as_bytes()[0..data_len])
+        } else {
+            None
+        };
+
         Ok(HttpRequest {
             method: HttpMethod::from(method),
             version,
             path,
             headers,
+            body,
         })
     }
 }
@@ -76,25 +89,29 @@ fn send_text_plain(mut stream: &TcpStream, text: &str) -> Result<usize> {
     Ok(bytes_written)
 }
 
-fn not_found_route(mut stream: &TcpStream) -> Result<usize> {
+fn send_not_found(mut stream: &TcpStream) -> Result<usize> {
     stream.write(b"HTTP/1.1 404 Not Found\r\n\r\n").context("Failed to send")
 }
 
-fn index_route(mut stream: &TcpStream) -> Result<usize> {
+fn send_ok(mut stream: &TcpStream) -> Result<usize> {
     stream.write(b"HTTP/1.1 200 OK\r\n\r\n").context("Failed to send")
 }
 
-fn echo_route(stream: &TcpStream, frame: &HttpRequest) -> Result<usize> {
+fn send_created(mut stream: &TcpStream) -> Result<usize> {
+    stream.write(b"HTTP/1.1 201 CREATED\r\n\r\n").context("Failed to send")
+}
+
+fn get_echo(stream: &TcpStream, frame: &HttpRequest) -> Result<usize> {
     send_text_plain(&stream, &frame.path[6..])
 }
 
-fn user_agent_route(stream: &TcpStream, frame: &HttpRequest) -> Result<usize> {
+fn get_user_agent(stream: &TcpStream, frame: &HttpRequest) -> Result<usize> {
     let user_agent = frame.headers.get("User-Agent")
         .ok_or(anyhow!("User Agent not found"))?;
     send_text_plain(&stream, user_agent)
 }
 
-fn files_route(stream: &TcpStream, frame: &HttpRequest, dir: &Option<String>) -> Result<usize> {
+fn get_files(stream: &TcpStream, frame: &HttpRequest, dir: &Option<String>) -> Result<usize> {
     let dir = dir.as_ref().ok_or(anyhow!("Directory not specified"))?;
     let mut path = PathBuf::from(dir);
     let filename = &frame.path[7..];
@@ -102,8 +119,18 @@ fn files_route(stream: &TcpStream, frame: &HttpRequest, dir: &Option<String>) ->
     if let Ok(data) = fs::read(path).context("File read") {
         send_binary(stream, &data)
     } else {
-        not_found_route(stream)
+        send_not_found(stream)
     }
+}
+
+fn post_files(stream: &TcpStream, frame: &HttpRequest, dir: &Option<String>) -> Result<usize> {
+    let dir = dir.as_ref().ok_or(anyhow!("Directory not specified"))?;
+    let data = frame.body.ok_or(anyhow!("No body in request"))?;
+    let mut path = PathBuf::from(dir);
+    let filename = &frame.path[7..];
+    path.push(filename);
+    fs::write(path, data)?;
+    send_created(stream)
 }
 
 
@@ -112,13 +139,25 @@ fn handle_connection(mut stream: TcpStream, config: Arc<Config>) -> Result<()> {
     stream.read(&mut buffer)?;
     let request = std::str::from_utf8(&buffer)?;
     let frame = HttpRequest::from_request_str(&request)?;
-    match frame.path {
-        "/" => index_route(&stream),
-        _ if frame.path.starts_with("/echo/") => echo_route(&stream, &frame),
-        _ if frame.path.starts_with("/user-agent") => user_agent_route(&stream, &frame),
-        _ if frame.path.starts_with("/files/") => files_route(&stream, &frame, &config.dir),
-        _ => not_found_route(&stream),
-    }?;
+    match frame.method {
+        HttpMethod::GET => {
+            match frame.path {
+                "/" => send_ok(&stream),
+                _ if frame.path.starts_with("/echo/") => get_echo(&stream, &frame),
+                _ if frame.path.starts_with("/user-agent") => get_user_agent(&stream, &frame),
+                _ if frame.path.starts_with("/files/") => get_files(&stream, &frame, &config.dir),
+                _ => send_not_found(&stream),
+            }?;
+        }
+        HttpMethod::POST => {
+            match frame.path {
+                _ if frame.path.starts_with("/files/") => post_files(&stream, &frame, &config.dir),
+                _ => send_not_found(&stream),
+            }?;
+        }
+        _ => unimplemented!()
+    }
+
 
     Ok(())
 }
