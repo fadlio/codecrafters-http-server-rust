@@ -52,13 +52,14 @@ impl HttpRequest<'_> {
                 }
             }).collect();
 
-        let body = if let Some(body_data) = lines.next() {
-            let data_len: usize = headers.get("Content-Length")
-                .ok_or(anyhow!("No content-length specified"))?
-                .parse()?;
-            Some(&body_data.as_bytes()[0..data_len])
-        } else {
-            None
+        let body = match lines.next() {
+            Some(body_data) if body_data.len() > 0 => {
+                let data_len: usize = headers.get("Content-Length")
+                    .ok_or(anyhow!("No content-length specified"))?
+                    .parse()?;
+                Some(&body_data.as_bytes()[0..data_len])
+            }
+            _ => None
         };
 
         Ok(HttpRequest {
@@ -134,9 +135,8 @@ fn post_files(stream: &TcpStream, frame: &HttpRequest, dir: &Option<String>) -> 
 
 fn handle_connection(mut stream: TcpStream, config: Arc<Config>) -> Result<()> {
     let mut buffer: [u8; 512] = [0; 512];
-    stream.read(&mut buffer)?;
-    let request = std::str::from_utf8(&buffer)?;
-    println!("{request}");
+    let size = stream.read(&mut buffer)?;
+    let request = std::str::from_utf8(&buffer[0..size])?;
     let frame = HttpRequest::from_request_str(&request)?;
     match frame.method {
         HttpMethod::GET => {
@@ -177,8 +177,6 @@ fn main() -> Result<()> {
     let config = Arc::new(Config {
         dir
     });
-
-    println!("{config:?}");
 
     for stream in listener.incoming() {
         match stream {
